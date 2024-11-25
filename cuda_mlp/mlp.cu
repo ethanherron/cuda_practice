@@ -20,7 +20,7 @@
 
 // constructor
 MLP::MLP(int input_size, int hidden_size, int output_size, ActivationType activation_type)
-    : activation(activation_type)
+    : activation(activation_type), d_hidden(nullptr), d_output_grad(nullptr), d_hidden_grad(nullptr)
 {
     params.input_size = input_size;
     params.hidden_size = hidden_size;
@@ -239,4 +239,13 @@ void MLP::SGDUpdate(float learning_rate) {
     CUDA_CHECK(cudaMemset(params.d_grad_bias_hidden, 0, size_grad_bias_hidden));
     CUDA_CHECK(cudaMemset(params.d_grad_bias_output, 0, size_grad_bias_output));
 
+}
+
+size_t MLP::getTotalParameters() const {
+    size_t total = 0;
+    total += static_cast<size_t>(params.input_size) * params.hidden_size;
+    total += static_cast<size_t>(params.hidden_size);
+    total += static_cast<size_t>(params.hidden_size) * params.output_size;
+    total += static_cast<size_t>(params.output_size);
+    return total;
 }

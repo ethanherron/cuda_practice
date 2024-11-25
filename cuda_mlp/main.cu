@@ -5,32 +5,76 @@
 #include "cuda_utils.h"    // include loss function 
 #include <iostream>        // for console I/O
 #include <cuda_runtime.h>  // for cuda mem allocation
+#include <iomanip>         // for std::setprecision
+#include <sstream>         // for std::ostringstream
 
-// progress bar
-void printProgressBar(int current, int total, int barWidth = 70) {
+// Function to print progress bar with optional EMA
+void printProgressBarWithEMA(int current, int total, float ema_loss, bool update_ema = false, int barWidth = 70) {
+    static bool first_call = true;            // Flag to track the first call
+    static float last_ema_loss = 0.0f;        // To store the last EMA loss
+
+    // Calculate progress
     float progress = static_cast<float>(current) / total;
     int pos = static_cast<int>(barWidth * progress);
+    if (pos >= barWidth) pos = barWidth - 1; // Prevent 'pos' from exceeding 'barWidth'
 
-    std::cout << "[";
-    for (int i = 0; i < barWidth; ++i) {
-        if (i < pos)
-            std::cout << "=";
-        else if (i == pos)
-            std::cout << ">";
+    // Round the percentage to the nearest integer
+    int percentage = static_cast<int>(progress * 100.0 + 0.5);
+
+    // Construct progress bar string
+    std::string bar = "[";
+    for (int j = 0; j < barWidth; ++j) { // Use 'j' instead of 'i' to avoid shadowing
+        if (j < pos)
+            bar += "=";
+        else if (j == pos)
+            bar += ">";
         else
-            std::cout << " ";
+            bar += " ";
     }
-    std::cout << "] " << int(progress * 100.0) << " %\r";
+    bar += "] " + std::to_string(percentage) + " %";
+
+    // Update EMA loss if required
+    if (update_ema) {
+        last_ema_loss = ema_loss;
+    }
+
+    // Construct EMA string with fixed decimal places
+    std::ostringstream ema_ss;
+    ema_ss << "EMA Loss: " << std::fixed << std::setprecision(4) << last_ema_loss;
+    std::string ema_str = ema_ss.str();
+
+    if (!first_call) {
+        // Move cursor up two lines to overwrite previous progress bar and EMA
+        std::cout << "\033[2A";
+    }
+
+    // Print progress bar
+    std::cout << bar << "\n";
+
+    // Print EMA loss
+    std::cout << ema_str << "\n";
+
+    // Flush the output to ensure it appears immediately
     std::cout.flush();
+
+    if (first_call) {
+        first_call = false; // Update the flag after the first call
+    }
 }
+
+
+
+
+
+
 
 int main() {
     // 1. init cifar10 data structure
     CIFAR10Data train_data;
 
     // 2. Define paths to the binary data files
-    std::string train_images_path = "/data/cifar10/cifar10_binary/cifar10_images.bin";
-    std::string train_labels_path = "/data/cifar10/cifar10_binary/cifar10_labels.bin";
+    std::string train_images_path = "/home/edherron/data/cifar10_binary/cifar10_images.bin";
+    std::string train_labels_path = "/home/edherron/data/cifar10_binary/cifar10_labels.bin";
 
     // 3. Specify the number of training samples
     int num_train_samples = 50000; // cifar 10 train dataset size
@@ -84,6 +128,10 @@ int main() {
     MLP mlp(input_size, hidden_size, output_size);
     mlp.initializer();
 
+    // Print out num params in mlp
+    size_t total_params = mlp.getTotalParameters();
+    std::cout << "Total number of parameters in the model: " << total_params << "\n";
+
     // 8. allocate device memory for input and output
     float* d_input;
     float* d_output;
@@ -117,8 +165,17 @@ int main() {
 
 
     // training params
-    float learning_rate = 0.01f;
+    float learning_rate = 0.0003f;
     int num_epochs = 1;
+
+    // init ema variables
+    float ema_loss = 0.0f;
+    float alpha = 0.1f;
+
+    int ema_batch_size = 25;
+    float batch_loss_accumulator = 0.0f;
+    int batch_count = 0;
+    bool ema_initialized = false;
 
     // training loop
     for (int epoch = 0; epoch < num_epochs; ++epoch) {
@@ -140,6 +197,10 @@ int main() {
             CUDA_CHECK(cudaMemcpy(&h_loss, d_loss, sizeof(float), cudaMemcpyDeviceToHost));
             epoch_loss += h_loss;
 
+            // accumulate loss for ema
+            batch_loss_accumulator += h_loss;
+            batch_count++;
+
             // backward pass
             mlp.backward(d_input, d_output, label);
 
@@ -147,15 +208,41 @@ int main() {
             mlp.SGDUpdate(learning_rate);
 
             // update progress bar
-            printProgressBar(i + 1, num_train_samples);
-            // if ((i + 1) % 10 == 0 || (i + 1) == num_train_samples) {
-            //     printProgressBar(i + 1, num_train_samples);
-            // }
+            if (batch_count == ema_batch_size) {
+                float average_batch_loss = batch_loss_accumulator / ema_batch_size;
+
+                if (!ema_initialized) {
+                    ema_loss = average_batch_loss;
+                    ema_initialized = true;
+                } else {
+                    ema_loss = alpha * average_batch_loss + (1.0f - alpha) * ema_loss;
+                }
+
+                printProgressBarWithEMA(i + 1, num_train_samples, ema_loss, true);
+
+                batch_loss_accumulator = 0.0f;
+                batch_count = 0;
+            } else {
+                printProgressBarWithEMA(i + 1, num_train_samples, ema_loss, false);
+            }
+        }
+        // handle any leftovers 
+        if (batch_count > 0) {
+            float average_batch_loss = batch_loss_accumulator / batch_count;
+
+            // update ema
+            if (!ema_initialized) {
+                ema_loss = average_batch_loss;
+                ema_initialized = true;
+            } else {
+                ema_loss = alpha * average_batch_loss + (1.0f - alpha) * ema_loss;
+            }
+            printProgressBarWithEMA(num_train_samples, num_train_samples, ema_loss, true);
         }
         // print new line after each progress bar
         std::cout << std::endl;
-        // print out epoch loss
-        std::cout << "Epoch " << (epoch + 1) << "/" << num_epochs << " - Loss: " << (epoch_loss / num_train_samples) << "\n";
+        std::cout << "Epoch " << (epoch + 1) << "/" << num_epochs 
+                  << " - Average Loss: " << (epoch_loss / num_train_samples) << "\n";
     }
 
 

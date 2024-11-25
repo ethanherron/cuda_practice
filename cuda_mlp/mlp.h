@@ -59,6 +59,9 @@ public:
     // sgd update function to apply grads
     void SGDUpdate(float learning_rate);
 
+    // calc total num params in mlp
+    size_t getTotalParameters() const;
+
 private:
     MLPParameters params;
     ActivationType activation;
