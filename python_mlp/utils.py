@@ -85,3 +85,46 @@ class Adam:
         for param in self.parameters:
             param.zero_grad()
         
+        
+class ScheduleFreeAdamW:
+    def __init__(self, parameters, lr, warmup=100, beta_1=0.9, beta_2=0.999):
+        self.parameters = parameters
+        self.lr = lr
+        self.warmup = warmup
+        self.beta_1 = beta_1
+        self.beta_2 = beta_2
+        self.epsilon = 1e-10
+        self.t = 0
+        
+        self.z = [np.copy(param.data) for param in self.parameters]
+        self.v = [np.zeros_like(param.data) for param in self.parameters]
+        self.c = 0
+        
+    def step(self):
+        self.t += 1
+        for i, param in enumerate(self.parameters):
+            # momentum interpolation
+            y = (1 - self.beta_1) * self.z[i] + self.beta_1 * param.data
+            
+            # compute grad and update var
+            g = param.grad
+            self.v[i] = self.beta_2 * self.v[i] + (1 - self.beta_2) * (g**2)
+            
+            # lr with warmup and bias correction
+            lr_t = self.lr * np.sqrt(1 - self.beta_2 ** self.t) / (1 - self.beta_1 ** self.t)
+            lr_t *= min(1, self.t / self.warmup)
+            
+            # update z (parameters)
+            self.z[i] -= lr_t * g / (np.sqrt(self.v[i]) + self.epsilon)
+            
+            # weights iterate mean
+            gamma = self.lr ** 2
+            c_next = gamma / (gamma + self.t * self.lr ** 2)
+            param.data = (1 - c_next) * param.data + c_next * self.z[i]
+            
+    def zero_grad(self):
+        for param in self.parameters:
+            param.zero_grad()
+            
+            
+            

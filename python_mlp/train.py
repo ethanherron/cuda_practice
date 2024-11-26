@@ -4,7 +4,7 @@ import numpy as np
 
 from engine import Variable
 from network import MLP
-from utils import CrossEntropyWithLogitsLoss, SGD, Adam
+from utils import CrossEntropyWithLogitsLoss, SGD, Adam, ScheduleFreeAdamW
 
 def gen_data(num_classes=3, features=3, samples_per_class=50, seed=None):
     if seed is not None:
@@ -45,8 +45,9 @@ print('Total parameters:', sum(param.data.size for param in mlp.parameters()))
 loss_fn = CrossEntropyWithLogitsLoss()
 
 learning_rate = 0.01 
-optimizer = SGD(mlp.parameters(), learning_rate)
+# optimizer = SGD(mlp.parameters(), learning_rate)
 # optimizer = Adam(mlp.parameters(), learning_rate)
+optimizer = ScheduleFreeAdamW(mlp.parameters(), learning_rate)
 
 test_X_var, test_y_var = gen_data(seed=999)  
 
