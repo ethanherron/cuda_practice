@@ -1,6 +1,7 @@
 # train.py
 
 import numpy as np
+from time import time
 
 from engine import Variable
 from network import MLP
@@ -34,9 +35,9 @@ def gen_data(num_classes=3, features=3, samples_per_class=50, seed=None):
     return X, y
 
 input_size = 3    
-hidden_size = 512   
+hidden_size = 16  
 output_size = 3   
-num_layers = 4    
+num_layers = 1    
 
 mlp = MLP(input_size, output_size, hidden_size, num_layers)
 print('Total parameters:', sum(param.data.size for param in mlp.parameters()))
@@ -53,7 +54,7 @@ test_X_var, test_y_var = gen_data(seed=999)
 
 
 epochs = 500 
-start = timeit.time()
+start = time()
 for epoch in range(1, epochs + 1):
     X_var, y_var = gen_data()
     
@@ -70,7 +71,7 @@ for epoch in range(1, epochs + 1):
     if epoch % 100 == 0 or epoch == 1:
         print(f'Epoch {epoch}, Loss: {loss.data:.4f}')
 
-print(f'total time elapsed {timeit.time() - start}')
+print(f'Total time elapsed: {time() - start:.2f} seconds')
 print("\nTesting after training:")
 
 test_logits = mlp(test_X_var)
