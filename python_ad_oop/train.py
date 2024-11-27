@@ -35,7 +35,7 @@ def gen_data(num_classes=3, features=3, samples_per_class=50, seed=None):
     return X, y
 
 input_size = 3    
-hidden_size = 16  
+hidden_size = 64  
 output_size = 3   
 num_layers = 1    
 
@@ -53,7 +53,7 @@ optimizer = SGD(mlp.parameters(), learning_rate)
 test_X_var, test_y_var = gen_data(seed=999)  
 
 
-epochs = 500 
+epochs = 1000 
 start = time()
 for epoch in range(1, epochs + 1):
     X_var, y_var = gen_data()
