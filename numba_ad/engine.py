@@ -1,74 +1,110 @@
+# engine.py
+
 import numpy as np
-from typing import Callable, List, Dict, Tuple, Optional
+from typing import Dict, Optional, Tuple
 
-# AD
+class Operation:
+    @staticmethod
+    def apply(*args):
+        raise NotImplementedError
+    
+class Activation:
+    @staticmethod
+    def apply(a):
+        raise NotImplementedError
 
-Tensor = Dict[str, Optional[np.ndarray]]
-
-computation_graph: List[Dict] = []
-
-def create_tensor(data: np.ndarray, requires_grad: bool=False) -> Tensor:
-    tensor = {'data': data, 'grad': None, 'requires_grad': requires_grad}
-    return tensor
-
-def backward(output: Tensor) -> None:
-    output['grad'] = np.ones_like(output['data'])
-    grads = {id(output): output['grad']}
-
-    for node in reversed(computation_graph):
-        output_tensor = node['output']
-        output_id = id(output_tensor)
-        grad_out = grads.get(output_id)
-        if grad_out is None:
-            raise KeyError(f'missing grad for tensor: {output_id}')
-        grad_inputs = node['backward'](grad_out)
-
-        for inp, grad in zip(node['inputs'], grad_inputs):
-            if inp['requires_grad']:
-                if inp['grad'] is None:
-                    inp['grad'] = grad
+class Variable:
+    def __init__(self, data, requires_grad=True):
+        self.data = data
+        self.grad = None
+        self.requires_grad = requires_grad
+        self._backward = lambda: None 
+        self._prev = set()
+        
+    def __add__(self, other):
+        return Add.apply(self, other)
+    
+    def __mul__(self, other):
+        return Mul.apply(self, other)
+    
+    def __matmul__(self, other):
+        return MatMul.apply(self, other)
+    
+    def backward(self):
+        self.grad = np.ones_like(self.data)
+        topology = []
+        visited = set()
+        def build_topology(v):
+            if v not in visited:
+                visited.add(v)
+                for child in v._prev:
+                    build_topology(child)
+                topology.append(v)
+        build_topology(self)
+        # reverse the graph
+        for v in reversed(topology):
+            v._backward()
+            
+    def zero_grad(self):
+        self.grad = None
+        
+        
+class Add(Operation):
+    @staticmethod
+    def apply(a, b):
+        a = a if isinstance(a, Variable) else Variable(np.array(a), requires_grad=False)
+        b = b if isinstance(b, Variable) else Variable(np.array(b), requires_grad=False)
+        out = Variable(a.data + b.data)
+        out._prev = {a, b}
+        
+        def _backward():
+            if a.requires_grad:
+                if a.data.shape != out.data.shape:
+                    # Bias term: sum gradients over the batch dimension
+                    grad_a = out.grad.sum(axis=0)
                 else:
-                    inp['grad'] += grad
-                grads[id(inp)] = inp['grad']
+                    grad_a = out.grad
+                a.grad = a.grad + grad_a if a.grad is not None else grad_a
+            if b.requires_grad:
+                if b.data.shape != out.data.shape:
+                    # Bias term: sum gradients over the batch dimension
+                    grad_b = out.grad.sum(axis=0)
+                else:
+                    grad_b = out.grad
+                b.grad = b.grad + grad_b if b.grad is not None else grad_b
+        out._backward = _backward
+        return out
 
-def clear_graph():
-    computation_graph.clear()
-                    
-def add_fn(a: Tensor, b: Tensor) -> Tensor:
-    out_data = a['data'] + b['data']
-    requires_grad = a['requires_grad'] or b['requires_grad']
+        
+class Mul(Operation):
+    @staticmethod
+    def apply(a, b):
+        a = a if isinstance(a, Variable) else Variable(np.array(a), requires_grad=False)
+        b = b if isinstance(b, Variable) else Variable(np.array(b), requires_grad=False)
+        out = Variable(a.data * b.data)
+        out._prev = {a, b}
+        
+        def _backward():
+            if a.requires_grad:
+                a.grad = a.grad + (b.data * out.grad) if a.grad is not None else b.data * out.grad
+            if b.requires_grad:
+                b.grad = b.grad + (a.data * out.grad) if b.grad is not None else a.data * out.grad
+        out._backward = _backward
+        return out
     
-    def backward(grad_out: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
-        grad_a = grad_out if a['requires_grad'] else None
-        grad_b = grad_out if b['requires_grad'] else None
-        return grad_a, grad_b
-    
-    out = create_tensor(out_data, requires_grad)
-    computation_graph.append({'inputs': [a, b], 'output': out, 'backward': backward})
-    return out
-
-def mul_fn(a: Tensor, b: Tensor) -> Tensor:
-    out_data = a['data'] * b['data']
-    requires_grad = a['requires_grad'] or b['requires_grad']
-    
-    def backward(grad_out: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
-        grad_a = grad_out * b['data'] if a['requires_grad'] else None
-        grad_b = grad_out * a['data'] if b['requires_grad'] else None
-        return grad_a, grad_b
-    
-    out = create_tensor(out_data, requires_grad)
-    computation_graph.append({'inputs': [a, b], 'output': out, 'backward': backward})
-    return out
-
-def matmul_fn(a: Tensor, b: Tensor) -> Tensor:
-    out_data = np.dot(a['data'], b['data'])
-    requires_grad = a['requires_grad'] or b['requires_grad']
-    
-    def backward(grad_out: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
-        grad_a = np.dot(grad_out, b['data'].T) if a['requires_grad'] else None
-        grad_b = np.dot(a['data'].T, grad_out) if b['requires_grad'] else None
-        return grad_a, grad_b
-    
-    out = create_tensor(out_data, requires_grad)
-    computation_graph.append({'inputs': [a, b], 'output': out, 'backward': backward})
-    return out
+class MatMul(Operation):
+    @staticmethod
+    def apply(a, b):
+        a = a if isinstance(a, Variable) else Variable(np.array(a), requires_grad=False)
+        b = b if isinstance(b, Variable) else Variable(np.array(b), requires_grad=False)
+        out = Variable(a.data @ b.data)
+        out._prev = {a, b}
+        
+        def _backward():
+            if a.requires_grad:
+                a.grad = a.grad + out.grad @ b.data.T if a.grad is not None else out.grad @ b.data.T
+            if b.requires_grad:
+                b.grad = b.grad + a.data.T @ out.grad if b.grad is not None else a.data.T @ out.grad
+        out._backward = _backward
+        return out
+        
